@@ -96,12 +96,15 @@ rtl_fm -f 433550000 -s 200000 -r 96000 -g 19.7 2>/dev/null | ./EfergyRPI_log
 //	*Notice the "-A fast" option on  rtl_fm.  This cut Raspberry Pi cpu load from 50% to 25% and decode still worked fine.
 //	Also, with an R820T USB dongle, leaving  rtl_fm gain in 'auto' mode  produced the best results.
 //
+#include <mysql.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <time.h>
 #include <math.h>
 #include <stdlib.h> // For exit function
 #include <string.h>
+#include <sys/time.h>
+
 
 #define VOLTAGE			240	/*For non-TPM type sensors, set to line voltage */
 //#define VOLTAGE			1	/* For Efergy Elite 3.0 TPM,  set to 1 */
@@ -114,6 +117,8 @@ rtl_fm -f 433550000 -s 200000 -r 96000 -g 19.7 2>/dev/null | ./EfergyRPI_log
 #define EXPECTED_BYTECOUNT_IF_CHECKSUM_USED	8
 #define EXPECTED_BYTECOUNT_IF_CRC_USED 		9
 
+float watts = 0;
+time_t abans;
 int analysis_wavecenter;
 
 #define LOGTYPE			1	// Allows changing line-endings - 0 is for Unix /n, 1 for Windows /r/n
@@ -128,7 +133,7 @@ FILE *fp;	 // Global var file handle
 // enough samples have been saved to cover the expected maximum frame size.  This maximum number of samples needed for a frame
 // is an estimate with padding which will hopefully be enough to store a full frame with some extra.
 // 
-// It seems that with most Efergy formats, each data bit is encoded  using some combination of about 18-20 rtl_fm samples.
+// It seems that with most Eferg1ormats, each data bit is encoded  using some combination of about 18-20 rtl_fm samples.
 // zero bits are usually received as 10-13 negative samples followed by 4-7 positive samples, while 1 bits
 // come in as 4-7 negative samples followed by 10-13 positive samples ( these #s may have wide tolerences)
 // If the signal has excessive noise, it's theoretically possible to fill up this storage and still have more frame data coming in.
@@ -150,6 +155,15 @@ FILE *fp;	 // Global var file handle
 
 int sample_storage[SAMPLE_STORE_SIZE];			
 int sample_store_index;
+   MYSQL *conn;
+   MYSQL_RES *res;
+   MYSQL_ROW row;
+  /* Change me */
+   char *server = "localhost";
+   char *user = "root";
+   char *password = "capoeira";
+   char *database = "openenergymonitor";
+
 
 int decode_bytes_from_pulse_counts(int pulse_store[], int pulse_store_index, unsigned char bytes[]) {
 	int i;
@@ -279,14 +293,19 @@ int generate_pulse_count_array(int display_pulse_details, int pulse_count_storag
 	return pulse_store_index;
 }
 
+
+
 void display_frame_data(int debug_level, char *msg, unsigned char bytes[], int bytecount) {
 
  	time_t ltime; 
 	char buffer[80];
 	time( &ltime );
 	struct tm *curtime = localtime( &ltime );
-	strftime(buffer,80,"%x,%X", curtime); 
-	
+	//strftime(buffer,80,"%x,%X", curtime); 
+strftime(buffer,80,"%F %X", curtime); 
+
+	//printf("el dia el posa com a %u -> \n", (unsigned)time(&ltime));
+
 	// Some magic here to figure out whether the message has a 1 byte checksum or 2 byte crc
 	char *data_ok_str = (char *) 0;
 	unsigned char checksum=0;
@@ -328,7 +347,73 @@ void display_frame_data(int debug_level, char *msg, unsigned char bytes[], int b
 			  printf("*For Efergy True Power Moniter (TPM), set VOLTAGE=1 before compiling\n");
 		}		
         } else if (data_ok_str != (char *) 0) {
-		printf("%s,%f\n",buffer,result);
+		
+	int dif_w=(watts-result);
+	if (dif_w<0) dif_w=dif_w*(-1);
+
+if( ((watts+10) < result) || ((watts-10) > result)){
+	//printf("diferencia watts %d - %f - %f \n",dif_w, watts,result);
+
+	double diff_t=0.00;
+	char *buf;
+	size_t sz;
+	struct tm *curtime2 = localtime( &abans );
+	char buffer2[80];
+	strftime(buffer2,80,"%F %X", curtime2); 
+
+	diff_t = difftime(ltime,abans);
+/*abans = abans - 10;
+		struct tm *curtime3 = localtime( &abans );
+	char buffer3[80];
+	strftime(buffer3,80,"%F %X", curtime3); 
+	printf("diferencia temps %f - %s - %s - %s \n",diff_t, buffer,buffer2,buffer3);*/
+	//printf("diferencia temps %f - %s - %s \n",diff_t, buffer,buffer2);
+	char *buf2;
+	size_t sz2;
+	
+	if(diff_t>50 && (dif_w>20)){
+		//printf("-diferencia temps %f - %s - %s \n",diff_t, buffer,buffer2);
+		//printf("-diferencia watts %d - %f - %f \n",dif_w, watts,result);
+		abans = ltime - 10;
+		struct tm *curtime3 = localtime( &abans );
+		char buffer3[80];
+		strftime(buffer3,80,"%F %X", curtime3); 
+
+		sz2 = snprintf(NULL, 0, "insert into consumreals(date, value) VALUES('%s','%f')\n",buffer3,watts);
+		buf2 = (char *)malloc(sz2 + 1); 
+		snprintf(buf2, sz2+1, "insert into consumreals(date, value) VALUES('%s','%f')\n",buffer3,watts);
+	   if (mysql_query(conn, buf2)) {
+	      fprintf(stderr, "%s\n", mysql_error(conn));
+	   }
+
+	}
+
+	abans=ltime;
+	//printf("diferencia temps %f = %s - %s\n",diff_t,buffer,buffer2);
+	watts = result;
+
+	/*
+	sz = snprintf(NULL, 0, "insert into consumreals(date,timestamp, value) VALUES('%s','%u','%f')\n",buffer,(unsigned)time(&ltime),result);
+	buf = (char *)malloc(sz + 1); 
+	snprintf(buf, sz+1, "insert into consumreals(date,timestamp, value) VALUES('%s','%u','%f')\n",buffer,(unsigned)time(&ltime),result);
+	*/
+	sz = snprintf(NULL, 0, "insert into consumreals(date, value) VALUES('%s','%f')\n",buffer,result);
+	buf = (char *)malloc(sz + 1); 
+	snprintf(buf, sz+1, "insert into consumreals(date, value) VALUES('%s','%f')\n",buffer,result);
+	//printf(buf);
+	/* send SQL query */
+	   if (mysql_query(conn, buf)) {
+	      fprintf(stderr, "%s\n", mysql_error(conn));
+	     // exit(1);
+	   }
+		//	printf("insert into consumreals(date, value) VALUES('%s','%f')\n",buffer,result);
+		  /* res = mysql_use_result(conn);
+	   printf("MySQL Tables in mysql database:\n");
+	   while ((row = mysql_fetch_row(res)) != NULL)
+	      printf("%s \n", row[0]);
+	   mysql_free_result(res);*/
+}
+
 		if(loggingok) {
 		  if(LOGTYPE) {
 		    fprintf(fp,"%s,%f\r\n",buffer,result);
@@ -342,8 +427,8 @@ void display_frame_data(int debug_level, char *msg, unsigned char bytes[], int b
 		  }
 		}
 		fflush(stdout);
-	} else
-		printf("Checksum/CEC Error.  Enable debug output with -d option\n");
+	} /*else
+		printf("Checksum/CEC Error.  Enable debug output with -d option\n");*/
 }
 
 void analyze_efergy_message(int debug_level) {
@@ -397,6 +482,17 @@ void analyze_efergy_message(int debug_level) {
 
 void  main (int argc, char**argv) 
 {
+
+time( &abans );
+   conn = mysql_init(NULL);
+   
+   /* Connect to database */
+   if (!mysql_real_connect(conn, server,
+         user, password, database, 0, NULL, 0)) {
+      fprintf(stderr, "%s\n", mysql_error(conn));
+      exit(1);
+   }
+
 	int debug_level = 0;
 	
 	// Give rtl_fm program some time to get initialized so its startup messages don't interleave with ours
@@ -477,6 +573,7 @@ void  main (int argc, char**argv)
 	} // outermost while 
 	
 	if(loggingok) {
+		   mysql_close(conn);
 	    fclose(fp); // If rtl-fm gives EOF and program terminates, close file gracefully.
 	}
 }
