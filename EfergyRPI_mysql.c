@@ -161,7 +161,7 @@ int sample_store_index;
   /* Change me */
    char *server = "localhost";
    char *user = "root";
-   char *password = "capoeira";
+   char *password = "****";
    char *database = "openenergymonitor";
 
 
