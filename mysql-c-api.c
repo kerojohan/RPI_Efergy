@@ -13,7 +13,7 @@ int main(void) {
   /* Change me */
    char *server = "localhost";
    char *user = "root";
-   char *password = "capoeira";
+   char *password = "*****";
    char *database = "efergymonitor";
    
    conn = mysql_init(NULL);
